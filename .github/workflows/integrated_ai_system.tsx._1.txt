@@ -1,0 +1,22 @@
+  const [performanceLog, setPerformanceLog] = useState([]);
+  const [memorySystem, setMemorySystem] = useState({
+    shortTerm: [],
+    longTerm: [],
+    archive: [],
+    compressionRatio: 0,
+    retentionScore: 0,
+    cyclicCleanup: 0
+  });
+  const [fileProcessing, setFileProcessing] = useState({
+    queue: [],
+    processed: [],
+    categories: {
+      code: { count: 0, types: ['tsx', 'rs', 'js', 'py', 'cpp'] },
+      documents: { count: 0, types: ['md', 'pdf', 'docx', 'txt'] },
+      data: { count: 0, types: ['json', 'csv', 'xml', 'yaml'] },
+      multimedia: { count: 0, types: ['png', 'jpg', 'mp4', 'wav'] }
+    },
+    locations: new Map(),
+    encoding: new Map()
+  });
+  const intervalRef = useRef(null);

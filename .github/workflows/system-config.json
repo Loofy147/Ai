@@ -1,0 +1,279 @@
+{
+  "fileTypes": {
+    "categories": {
+      "code": {
+        "extensions": [
+          "tsx", "ts", "jsx", "js", "py", "cpp", "c", "h", "java", "kt",
+          "go", "php", "rb", "pl", "lua", "dart", "R", "jl", "f", "vhd",
+          "sv", "asm", "wasm", "html", "css", "scss", "less", "vue", "svelte",
+          "sql", "sh", "bash", "ps1", "bat", "cmd", "swift", "m", "rs"
+        ],
+        "mimeTypes": [
+          "text/javascript", "text/typescript", "text/x-python",
+          "text/x-c", "text/x-java-source", "text/html", "text/css",
+          "application/javascript", "application/typescript"
+        ],
+        "description": "Source code files and scripts",
+        "processingOptions": {
+          "syntaxHighlighting": true,
+          "dependencyAnalysis": true,
+          "codeMetrics": true,
+          "securityScanning": true
+        }
+      },
+      "documents": {
+        "extensions": [
+          "md", "pdf", "docx", "doc", "txt", "rtf", "odt", "epub", "tex",
+          "xlsx", "xls", "ods", "pptx", "ppt", "odp", "log", "nfo",
+          "readme", "changelog", "license"
+        ],
+        "mimeTypes": [
+          "application/pdf", "text/plain", "text/markdown",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        ],
+        "description": "Text documents, spreadsheets, and presentations",
+        "processingOptions": {
+          "textExtraction": true,
+          "metadataExtraction": true,
+          "languageDetection": true,
+          "contentSummary": true
+        }
+      },
+      "data": {
+        "extensions": [
+          "json", "csv", "xml", "yaml", "yml", "toml", "ini", "parquet",
+          "avro", "orc", "sqlite", "db", "hdf5", "h5", "feather", "pickle",
+          "pkl", "geojson", "topojson", "gpx", "kml", "rdf", "ttl", "graphml",
+          "tsv", "jsonl", "ndjson"
+        ],
+        "mimeTypes": [
+          "application/json", "text/csv", "application/xml", "text/yaml",
+          "application/x-sqlite3", "application/x-parquet"
+        ],
+        "description": "Structured data files and databases",
+        "processingOptions": {
+          "schemaValidation": true,
+          "dataProfiler": true,
+          "statisticalAnalysis": true,
+          "dataQualityCheck": true
+        }
+      },
+      "multimedia": {
+        "extensions": [
+          "png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp", "svg", "ico",
+          "psd", "ai", "eps", "raw", "dng", "heic", "avif", "mp3", "wav",
+          "aac", "flac", "ogg", "m4a", "wma", "aiff", "opus", "mp4", "mov",
+          "avi", "wmv", "flv", "webm", "mkv", "3gp", "obj", "fbx", "gltf",
+          "glb", "stl", "dae", "blend", "ttf", "otf", "woff", "woff2"
+        ],
+        "mimeTypes": [
+          "image/png", "image/jpeg", "image/gif", "image/svg+xml",
+          "audio/mpeg", "audio/wav", "video/mp4", "video/webm",
+          "font/ttf", "font/otf", "model/gltf+json"
+        ],
+        "description": "Images, audio, video, 3D models, and fonts",
+        "processingOptions": {
+          "thumbnailGeneration": true,
+          "metadataExtraction": true,
+          "contentAnalysis": true,
+          "formatConversion": true
+        }
+      },
+      "archives": {
+        "extensions": [
+          "zip", "tar", "gz", "rar", "7z", "bz2", "xz", "iso", "dmg",
+          "cab", "msi", "deb", "rpm", "pkg"
+        ],
+        "mimeTypes": [
+          "application/zip", "application/x-tar", "application/gzip",
+          "application/x-rar-compressed", "application/x-7z-compressed"
+        ],
+        "description": "Compressed archives and packages",
+        "processingOptions": {
+          "contentListing": true,
+          "extractionPreview": true,
+          "integrityCheck": true,
+          "securityScanning": true
+        }
+      },
+      "executables": {
+        "extensions": [
+          "exe", "dll", "so", "dylib", "apk", "app", "bin", "run",
+          "msi", "pkg", "dmg"
+        ],
+        "mimeTypes": [
+          "application/x-executable", "application/x-sharedlib",
+          "application/vnd.android.package-archive",
+          "application/x-msdownload"
+        ],
+        "description": "Executable files and libraries",
+        "processingOptions": {
+          "securityScanning": true,
+          "signatureVerification": true,
+          "metadataExtraction": true,
+          "quarantineMode": true
+        }
+      }
+    },
+    "security": {
+      "allowedExecutables": false,
+      "maxFileSize": "50MB",
+      "quarantineExtensions": ["exe", "dll", "bat", "cmd", "scr", "vbs", "jar"],
+      "scanForMalware": true,
+      "allowedMimeTypes": [
+        "text/*", "image/*", "audio/*", "video/*", "application/json",
+        "application/xml", "application/pdf", "application/zip"
+      ],
+      "blockedMimeTypes": [
+        "application/x-executable", "application/x-msdownload"
+      ]
+    },
+    "processing": {
+      "defaultOptions": {
+        "extractMetadata": true,
+        "generateThumbnails": true,
+        "performContentAnalysis": true,
+        "enableCaching": true,
+        "compressionLevel": "medium"
+      },
+      "limits": {
+        "maxConcurrentFiles": 10,
+        "maxQueueSize": 100,
+        "timeoutSeconds": 300,
+        "maxMemoryUsage": "1GB"
+      },
+      "optimization": {
+        "enableParallelProcessing": true,
+        "useWorkerThreads": true,
+        "cacheResults": true,
+        "adaptiveCompression": true
+      }
+    }
+  },
+  "memorySystem": {
+    "configuration": {
+      "shortTermCapacity": 100,
+      "longTermCapacity": 1000,
+      "archiveCapacity": 10000,
+      "compressionRatio": 0.7,
+      "retentionThreshold": 0.8,
+      "cleanupInterval": 300000
+    },
+    "algorithms": {
+      "compressionAlgorithm": "adaptive_semantic",
+      "retrievalAlgorithm": "hybrid_vector_keyword",
+      "retentionScoring": "multi_factor_weighted",
+      "similarityThreshold": 0.7
+    },
+    "optimization": {
+      "enableSemanticSearch": true,
+      "useVectorEmbeddings": true,
+      "adaptiveRetention": true,
+      "backgroundCompression": true
+    }
+  },
+  "performance": {
+    "monitoring": {
+      "enableLogging": true,
+      "logLevel": "info",
+      "metricsInterval": 5000,
+      "maxLogEntries": 1000
+    },
+    "thresholds": {
+      "cpu": 0.8,
+      "memory": 0.85,
+      "responseTime": 5000,
+      "errorRate": 0.05,
+      "diskIO": 0.9,
+      "networkIO": 0.9
+    },
+    "alerts": {
+      "enableAnomalyDetection": true,
+      "alertThresholds": {
+        "critical": 0.95,
+        "warning": 0.8,
+        "info": 0.6
+      },
+      "notificationMethods": ["log", "callback", "email"]
+    }
+  },
+  "api": {
+    "endpoints": {
+      "memory": {
+        "store": "/api/memory/store",
+        "retrieve": "/api/memory/retrieve",
+        "compress": "/api/memory/compress",
+        "status": "/api/memory/status"
+      },
+      "files": {
+        "upload": "/api/files/upload",
+        "process": "/api/files/process",
+        "status": "/api/files/{id}/status",
+        "categories": "/api/files/categories"
+      },
+      "performance": {
+        "metrics": "/api/performance/metrics",
+        "logs": "/api/performance/logs",
+        "alerts": "/api/performance/alerts"
+      }
+    },
+    "authentication": {
+      "required": false,
+      "methods": ["apiKey", "jwt", "oauth2"],
+      "rateLimiting": {
+        "requests": 1000,
+        "windowMs": 900000
+      }
+    },
+    "cors": {
+      "origin": "*",
+      "methods": ["GET", "POST", "PUT", "DELETE"],
+      "allowedHeaders": ["Content-Type", "Authorization", "X-API-Key"]
+    }
+  },
+  "deployment": {
+    "environment": {
+      "nodeVersion": "18.x",
+      "npmVersion": "9.x",
+      "platform": "linux",
+      "architecture": "x64"
+    },
+    "docker": {
+      "baseImage": "node:18-alpine",
+      "exposedPorts": [3000, 3001],
+      "volumes": ["/app/data", "/app/logs"],
+      "healthCheck": {
+        "endpoint": "/health",
+        "interval": "30s",
+        "timeout": "10s",
+        "retries": 3
+      }
+    },
+    "scaling": {
+      "minInstances": 1,
+      "maxInstances": 10,
+      "targetCPU": 70,
+      "targetMemory": 80
+    }
+  },
+  "logging": {
+    "levels": ["debug", "info", "warn", "error"],
+    "format": "json",
+    "rotation": {
+      "maxSize": "100MB",
+      "maxFiles": 10,
+      "compress": true
+    },
+    "destinations": ["console", "file", "remote"],
+    "structured": {
+      "timestamp": true,
+      "level": true,
+      "message": true,
+      "metadata": true,
+      "traceId": true
+    }
+  }
+}
+
