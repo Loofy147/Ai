@@ -16,7 +16,22 @@ export function activate(context: vscode.ExtensionContext) {
                     const response = await axios.post(GENERATE_URL, {
                         prompt: `Explain the following code:\n\n${selectedText}`
                     });
-                    vscode.window.showInformationMessage(response.data.response);
+                    const feedback = await vscode.window.showInformationMessage(
+                        response.data.response,
+                        { modal: true },
+                        "👍 Helpful",
+                        "👎 Not Helpful"
+                    );
+
+                    // We will send the feedback to the backend in the next step.
+                    if (feedback) {
+                        axios.post('http://127.0.0.1:8000/feedback', {
+                            playbook_uuid: response.data.playbook_uuid,
+                            feedback: feedback
+                        });
+                        vscode.window.showInformationMessage(`Thank you for your feedback! (${feedback})`);
+                    }
+
                 } catch (error) {
                     vscode.window.showErrorMessage('Error communicating with the AI assistant.');
                     console.error(error);
@@ -44,6 +59,22 @@ export function activate(context: vscode.ExtensionContext) {
                     editor.edit(editBuilder => {
                         editBuilder.replace(selection, response.data.response);
                     });
+
+                    const feedback = await vscode.window.showInformationMessage(
+                        "Was this code helpful?",
+                        { modal: true },
+                        "👍 Helpful",
+                        "👎 Not Helpful"
+                    );
+
+                    // We will send the feedback to the backend in the next step.
+                    if (feedback) {
+                        axios.post('http://127.0.0.1:8000/feedback', {
+                            playbook_uuid: response.data.playbook_uuid,
+                            feedback: feedback
+                        });
+                        vscode.window.showInformationMessage(`Thank you for your feedback! (${feedback})`);
+                    }
 
                 } catch (error) {
                     vscode.window.showErrorMessage('Error communicating with the AI assistant.');
