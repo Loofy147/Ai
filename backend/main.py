@@ -5,30 +5,33 @@ import os
 import weaviate
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
 load_dotenv()
 
-app = FastAPI()
+clients = {}
 
-# --- Configuration ---
-WEAVIATE_URL = "http://localhost:8080"
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-MODEL_NAME = 'all-MiniLM-L6-v2'
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- Initialize models and clients ---
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+    clients['embedding_model'] = SentenceTransformer('all-MiniLM-L6-v2')
+    clients['weaviate_client'] = weaviate.Client(os.getenv("WEAVIATE_URL", "http://localhost:8080"))
+    yield
+    # --- Cleanup ---
+    clients.clear()
 
-# --- Initialize models and clients ---
-openai.api_key = OPENAI_API_KEY
-embedding_model = SentenceTransformer(MODEL_NAME)
-weaviate_client = weaviate.Client(WEAVIATE_URL)
+app = FastAPI(lifespan=lifespan)
 
 class CodeRequest(BaseModel):
     prompt: str
 
 def retrieve_context(prompt: str) -> str:
     """Retrieves relevant code chunks and playbooks from Weaviate."""
-    prompt_vector = embedding_model.encode(prompt).tolist()
+    prompt_vector = clients['embedding_model'].encode(prompt).tolist()
 
     # --- Retrieve Code Chunks ---
-    code_result = weaviate_client.query.get(
+    code_result = clients['weaviate_client'].query.get(
         "CodeChunk",
         ["code", "file_name"]
     ).with_near_vector({
@@ -70,9 +73,12 @@ def generate_playbook(prompt: str, context: str) -> str:
         f"--- Playbook ---\n"
     )
 
-    response = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=playbook_prompt,
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are an expert AI architect."},
+            {"role": "user", "content": playbook_prompt}
+        ],
         max_tokens=500,
         n=1,
         stop=None,
@@ -81,8 +87,8 @@ def generate_playbook(prompt: str, context: str) -> str:
     playbook = response.choices[0].text.strip()
 
     # --- Store the playbook in Weaviate ---
-    playbook_vector = embedding_model.encode(playbook).tolist()
-    playbook_uuid = weaviate_client.data_object.create(
+    playbook_vector = clients['embedding_model'].encode(playbook).tolist()
+    playbook_uuid = clients['weaviate_client'].data_object.create(
         data_object={"playbook": playbook, "confidence": 0.5}, # Initial confidence
         class_name="Playbook",
         vector=playbook_vector
@@ -104,9 +110,12 @@ def reflect_on_response(prompt: str, context: str, playbook: str, response: str)
         f"--- Quality Score ---\n"
     )
 
-    reflection_response = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=reflection_prompt,
+    reflection_response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are a senior AI software engineer."},
+            {"role": "user", "content": reflection_prompt}
+        ],
         max_tokens=10,
         n=1,
         stop=None,
@@ -132,9 +141,12 @@ async def generate(request: CodeRequest):
         f"--- Answer ---\n"
     )
 
-    response_text = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=augmented_prompt,
+    response_text = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You are an expert AI programming assistant."},
+            {"role": "user", "content": augmented_prompt}
+        ],
         max_tokens=1500,
         n=1,
         stop=None,
@@ -143,7 +155,7 @@ async def generate(request: CodeRequest):
 
     # --- Reflect and update playbook confidence ---
     new_confidence = reflect_on_response(request.prompt, context, playbook, response_text)
-    weaviate_client.data_object.update(
+    clients['weaviate_client'].data_object.update(
         uuid=playbook_uuid,
         class_name="Playbook",
         data_object={"confidence": new_confidence}
@@ -167,9 +179,12 @@ async def generate_test(request: TestRequest):
         f"--- Test Code ---\n"
     )
 
-    response = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=prompt,
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": f"You are a QA engineer. Write a unit test for the following function using the {request.testing_framework} framework."},
+            {"role": "user", "content": prompt}
+        ],
         max_tokens=1024,
         n=1,
         stop=None,

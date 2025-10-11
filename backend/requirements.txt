@@ -1,8 +1,8 @@
 fastapi
 uvicorn
-openai
+openai~=1.0
 python-dotenv
-weaviate-client
+weaviate-client~=3.26.2
 tree-sitter
 sentence-transformers
 torch
