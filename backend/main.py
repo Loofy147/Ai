@@ -5,30 +5,33 @@ import os
 import weaviate
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
 load_dotenv()
 
-app = FastAPI()
+clients = {}
 
-# --- Configuration ---
-WEAVIATE_URL = "http://localhost:8080"
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-MODEL_NAME = 'all-MiniLM-L6-v2'
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- Initialize models and clients ---
+    clients['openai_client'] = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    clients['embedding_model'] = SentenceTransformer('all-MiniLM-L6-v2')
+    clients['weaviate_client'] = weaviate.Client(os.getenv("WEAVIATE_URL", "http://localhost:8080"))
+    yield
+    # --- Cleanup ---
+    clients.clear()
 
-# --- Initialize models and clients ---
-openai.api_key = OPENAI_API_KEY
-embedding_model = SentenceTransformer(MODEL_NAME)
-weaviate_client = weaviate.Client(WEAVIATE_URL)
+app = FastAPI(lifespan=lifespan)
 
 class CodeRequest(BaseModel):
     prompt: str
 
 def retrieve_context(prompt: str) -> str:
     """Retrieves relevant code chunks and playbooks from Weaviate."""
-    prompt_vector = embedding_model.encode(prompt).tolist()
+    prompt_vector = clients['embedding_model'].encode(prompt).tolist()
 
     # --- Retrieve Code Chunks ---
-    code_result = weaviate_client.query.get(
+    code_result = clients['weaviate_client'].query.get(
         "CodeChunk",
         ["code", "file_name"]
     ).with_near_vector({
@@ -70,19 +73,22 @@ def generate_playbook(prompt: str, context: str) -> str:
         f"--- Playbook ---\n"
     )
 
-    response = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=playbook_prompt,
+    response = clients['openai_client'].chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are an expert AI architect."},
+            {"role": "user", "content": playbook_prompt}
+        ],
         max_tokens=500,
         n=1,
         stop=None,
         temperature=0.3,
     )
-    playbook = response.choices[0].text.strip()
+    playbook = response.choices[0].message.content.strip()
 
     # --- Store the playbook in Weaviate ---
-    playbook_vector = embedding_model.encode(playbook).tolist()
-    playbook_uuid = weaviate_client.data_object.create(
+    playbook_vector = clients['embedding_model'].encode(playbook).tolist()
+    playbook_uuid = clients['weaviate_client'].data_object.create(
         data_object={"playbook": playbook, "confidence": 0.5}, # Initial confidence
         class_name="Playbook",
         vector=playbook_vector
@@ -104,16 +110,19 @@ def reflect_on_response(prompt: str, context: str, playbook: str, response: str)
         f"--- Quality Score ---\n"
     )
 
-    reflection_response = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=reflection_prompt,
+    reflection_response = clients['openai_client'].chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are a senior AI software engineer."},
+            {"role": "user", "content": reflection_prompt}
+        ],
         max_tokens=10,
         n=1,
         stop=None,
         temperature=0.0,
     )
     try:
-        score = float(reflection_response.choices[0].text.strip())
+        score = float(reflection_response.choices[0].message.content.strip())
         return max(0.0, min(1.0, score)) # Clamp the score between 0.0 and 1.0
     except ValueError:
         return 0.5 # Default score if parsing fails
@@ -132,24 +141,58 @@ async def generate(request: CodeRequest):
         f"--- Answer ---\n"
     )
 
-    response_text = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=augmented_prompt,
+    response_text = clients['openai_client'].chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You are an expert AI programming assistant."},
+            {"role": "user", "content": augmented_prompt}
+        ],
         max_tokens=1500,
         n=1,
         stop=None,
         temperature=0.5,
-    ).choices[0].text.strip()
+    ).choices[0].message.content.strip()
 
     # --- Reflect and update playbook confidence ---
     new_confidence = reflect_on_response(request.prompt, context, playbook, response_text)
-    weaviate_client.data_object.update(
+    clients['weaviate_client'].data_object.update(
         uuid=playbook_uuid,
         class_name="Playbook",
         data_object={"confidence": new_confidence}
     )
 
-    return {"response": response_text}
+    return {"response": response_text, "playbook_uuid": playbook_uuid}
+
+
+class FeedbackRequest(BaseModel):
+    playbook_uuid: str
+    feedback: str # "👍 Helpful" or "👎 Not Helpful"
+
+@app.post("/feedback")
+async def feedback(request: FeedbackRequest):
+    """Updates the confidence score of a playbook based on user feedback."""
+    try:
+        playbook = clients['weaviate_client'].data_object.get_by_id(
+            request.playbook_uuid,
+            class_name="Playbook"
+        )
+
+        current_confidence = playbook["properties"]["confidence"]
+
+        if request.feedback == "👍 Helpful":
+            new_confidence = min(1.0, current_confidence + 0.1)
+        else:
+            new_confidence = max(0.0, current_confidence - 0.1)
+
+        clients['weaviate_client'].data_object.update(
+            uuid=request.playbook_uuid,
+            class_name="Playbook",
+            data_object={"confidence": new_confidence}
+        )
+        return {"status": "success"}
+    except Exception as e:
+        print(f"Error updating playbook confidence: {e}")
+        return {"status": "error"}
 
 
 class TestRequest(BaseModel):
@@ -167,12 +210,15 @@ async def generate_test(request: TestRequest):
         f"--- Test Code ---\n"
     )
 
-    response = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=prompt,
+    response = clients['openai_client'].chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": f"You are a QA engineer. Write a unit test for the following function using the {request.testing_framework} framework."},
+            {"role": "user", "content": prompt}
+        ],
         max_tokens=1024,
         n=1,
         stop=None,
         temperature=0.5,
     )
-    return {"response": response.choices[0].text.strip()}
+    return {"response": response.choices[0].message.content.strip()}
