@@ -43,6 +43,19 @@ def main():
     except weaviate.exceptions.UnexpectedStatusCodeException:
         print("Schema 'CodeChunk' already exists.")
 
+    playbook_class_obj = {
+        "class": "Playbook",
+        "vectorizer": "none",
+        "properties": [
+            {"name": "playbook", "dataType": ["text"]},
+            {"name": "confidence", "dataType": ["number"]},
+        ]
+    }
+    try:
+        client.schema.create_class(playbook_class_obj)
+    except weaviate.exceptions.UnexpectedStatusCodeException:
+        print("Schema 'Playbook' already exists.")
+
 
     # --- Ingestion process ---
     with client.batch as batch:
