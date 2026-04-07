@@ -6,6 +6,12 @@ import weaviate
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
+import threading
+import numpy as np
+import inspect
+
+from backend.py.saturation import SaturationCore
+from backend.py.execution_gate import TransformerExecutionGate
 
 load_dotenv()
 
@@ -17,8 +23,22 @@ async def lifespan(app: FastAPI):
     clients['openai_client'] = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     clients['embedding_model'] = SentenceTransformer('all-MiniLM-L6-v2')
     clients['weaviate_client'] = weaviate.Client(os.getenv("WEAVIATE_URL", "http://localhost:8080"))
+
+    # --- Initialize Stratos Saturation Core ---
+    sc = SaturationCore()
+    clients['saturation_core'] = sc
+    clients['execution_gate'] = TransformerExecutionGate(dim=sc.dim)
+
+    # Start the breeding loop in the background
+    threading.Thread(target=sc.breeding_loop, daemon=True).start()
+
+    # Ingest the core itself as an initial seed
+    sc.ingest("stratos.saturation_core", inspect.getsource(SaturationCore))
+
     yield
     # --- Cleanup ---
+    if 'saturation_core' in clients:
+        clients['saturation_core'].stop()
     clients.clear()
 
 app = FastAPI(lifespan=lifespan)
@@ -44,7 +64,7 @@ def retrieve_context(prompt: str) -> str:
             context += f"--- From {item['file_name']} ---\n{item['code']}\n\n"
 
     # --- Retrieve High-Confidence Playbooks ---
-    playbook_result = weaviate_client.query.get(
+    playbook_result = clients['weaviate_client'].query.get(
         "Playbook",
         ["playbook", "confidence"]
     ).with_near_vector({
@@ -163,6 +183,35 @@ async def generate(request: CodeRequest):
 
     return {"response": response_text, "playbook_uuid": playbook_uuid}
 
+@app.post("/saturate")
+async def saturate():
+    """Triggers the full system harvest process."""
+    sc = clients['saturation_core']
+    threading.Thread(target=sc.crawl_and_consume, daemon=True).start()
+    return {"status": "Saturation initiated."}
+
+@app.post("/execute-synthetic")
+async def execute_synthetic(request: CodeRequest):
+    """Performs a forward pass using a synthetic bred fiber."""
+    sc = clients['saturation_core']
+    gate = clients['execution_gate']
+
+    # Vectorize the prompt as input
+    input_vector = clients['embedding_model'].encode(request.prompt)
+
+    # Retrieve a synthetic fiber
+    fiber = sc.get_synthetic_fiber()
+
+    # Execute the gate
+    import torch
+    with torch.no_grad():
+        output = gate(torch.from_numpy(input_vector).float(), fiber)
+
+    return {
+        "status": "Synthetic pass complete.",
+        "fiber_sample": fiber[:10].tolist(),
+        "output_sample": output.numpy()[0][:10].tolist()
+    }
 
 class FeedbackRequest(BaseModel):
     playbook_uuid: str
@@ -193,7 +242,6 @@ async def feedback(request: FeedbackRequest):
     except Exception as e:
         print(f"Error updating playbook confidence: {e}")
         return {"status": "error"}
-
 
 class TestRequest(BaseModel):
     code: str
