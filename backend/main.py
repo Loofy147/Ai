@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 import openai
 import os
@@ -6,6 +6,13 @@ import weaviate
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
+import threading
+import numpy as np
+import inspect
+from typing import List, Optional
+
+from backend.py.saturation import SaturationCore
+from backend.py.execution_gate import TransformerExecutionGate
 
 load_dotenv()
 
@@ -17,14 +24,31 @@ async def lifespan(app: FastAPI):
     clients['openai_client'] = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     clients['embedding_model'] = SentenceTransformer('all-MiniLM-L6-v2')
     clients['weaviate_client'] = weaviate.Client(os.getenv("WEAVIATE_URL", "http://localhost:8080"))
+
+    # --- Initialize Stratos Saturation Core (V3) ---
+    sc = SaturationCore(dim=4096)
+    clients['saturation_core'] = sc
+    clients['execution_gate'] = TransformerExecutionGate(dim=sc.dim)
+
+    # Start the breeding loop in the background
+    threading.Thread(target=sc.breeding_loop, daemon=True).start()
+
+    # Trigger initial tactical harvest
+    threading.Thread(target=sc.crawl_and_consume, args=(["json", "numpy"],), daemon=True).start()
+
     yield
     # --- Cleanup ---
+    if 'saturation_core' in clients:
+        clients['saturation_core'].stop()
     clients.clear()
 
 app = FastAPI(lifespan=lifespan)
 
 class CodeRequest(BaseModel):
     prompt: str
+
+class HarvestRequest(BaseModel):
+    targets: List[str]
 
 def retrieve_context(prompt: str) -> str:
     """Retrieves relevant code chunks and playbooks from Weaviate."""
@@ -44,7 +68,7 @@ def retrieve_context(prompt: str) -> str:
             context += f"--- From {item['file_name']} ---\n{item['code']}\n\n"
 
     # --- Retrieve High-Confidence Playbooks ---
-    playbook_result = weaviate_client.query.get(
+    playbook_result = clients['weaviate_client'].query.get(
         "Playbook",
         ["playbook", "confidence"]
     ).with_near_vector({
@@ -163,6 +187,50 @@ async def generate(request: CodeRequest):
 
     return {"response": response_text, "playbook_uuid": playbook_uuid}
 
+@app.post("/harvest")
+async def harvest(request: HarvestRequest, background_tasks: BackgroundTasks):
+    """Triggers a targeted harvest of libraries."""
+    sc = clients['saturation_core']
+    background_tasks.add_task(sc.crawl_and_consume, request.targets)
+    return {"status": f"Harvest initiated for targets: {request.targets}"}
+
+@app.post("/verify-fidelity")
+async def verify_fidelity(request: CodeRequest):
+    """Verifies the retrieval fidelity for a given path."""
+    sc = clients['saturation_core']
+    fidelity = sc.verify_fidelity(request.prompt)
+    return {"path": request.prompt, "fidelity": fidelity}
+
+@app.post("/query-manifold")
+async def query_manifold(request: CodeRequest):
+    """Retrieves semantic memory from the manifold using an identity key."""
+    sc = clients['saturation_core']
+    res_vec = sc.query(request.prompt)
+    if res_vec is None:
+        return {"status": "Not found in manifold."}
+    return {
+        "status": "Retrieval complete.",
+        "vector_sample": res_vec[:10].tolist()
+    }
+
+@app.post("/execute-synthetic")
+async def execute_synthetic(request: CodeRequest):
+    """Performs a forward pass using a synthetic bred fiber."""
+    sc = clients['saturation_core']
+    gate = clients['execution_gate']
+
+    input_vector = np.random.randn(sc.dim).astype(np.float32)
+    fiber = sc.get_synthetic_fiber()
+
+    import torch
+    with torch.no_grad():
+        output = gate(torch.from_numpy(input_vector).float(), fiber)
+
+    return {
+        "status": "Synthetic pass complete.",
+        "fiber_sample": fiber[:10].tolist(),
+        "output_sample": output.numpy()[0][:10].tolist()
+    }
 
 class FeedbackRequest(BaseModel):
     playbook_uuid: str
@@ -193,7 +261,6 @@ async def feedback(request: FeedbackRequest):
     except Exception as e:
         print(f"Error updating playbook confidence: {e}")
         return {"status": "error"}
-
 
 class TestRequest(BaseModel):
     code: str
