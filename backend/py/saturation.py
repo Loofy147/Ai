@@ -6,6 +6,8 @@ import inspect
 import time
 import threading
 import json
+import subprocess
+import importlib
 from datetime import datetime
 try:
     import fcntl
@@ -14,17 +16,19 @@ except ImportError:
     fcntl = None
 
 # =====================================================================
-# STRATOS OMEGA: SATURATION CORE (V2 - HRR MANIFOLD)
+# STRATOS OMEGA: SATURATION CORE (V3 - DEEP HARVEST & REGISTRY)
 # =====================================================================
 
 class SaturationCore:
-    def __init__(self, m=1000003, dim=2048):
+    def __init__(self, m=1000003, dim=4096):
         self.m = m
         self.dim = dim
-        self.memory_dir = './STRATOS_MEMORY_V2'
+        self.memory_dir = './STRATOS_MEMORY_V3'
         os.makedirs(self.memory_dir, exist_ok=True)
         self.lock = threading.Lock()
         self.is_running = True
+        # Local registry of original content vectors for fidelity verification
+        self.registry = {}
 
     def _hash(self, identity: str) -> int:
         """High-precision hashing for the fiber manifold."""
@@ -55,7 +59,7 @@ class SaturationCore:
             try:
                 return str(obj.__code__.co_code) if hasattr(obj, '__code__') else str(obj)
             except Exception:
-                return str(obj)
+                return str(getattr(obj, "__name__", str(obj)))
 
     def _atomic_add(self, filepath, vector):
         """Thread-safe and process-safe accumulation into the manifold."""
@@ -78,27 +82,58 @@ class SaturationCore:
                     if fcntl:
                         fcntl.flock(f, fcntl.LOCK_UN)
 
-    def ingest(self, path_name: str, obj, p_type: str = "namespace_capture"):
-        """Binds an identity vector to a semantic content vector and adds to manifold."""
-        sig = self._get_semantic_signature(obj)
+    def ensure_libraries(self, targets):
+        """Force install targets if they are missing."""
+        print(f"[*] STRATOS: Synchronizing dependencies: {targets}")
+        for lib in targets:
+            try:
+                importlib.import_module(lib)
+            except ImportError:
+                print(f"[!] {lib} missing. Injecting via pip...")
+                subprocess.check_call([sys.executable, "-m", "pip", "install", lib])
 
+    def harvest_library(self, lib_name: str):
+        """Deep scan a library for classes and functions to bind into the manifold."""
+        print(f"[*] HARVESTING: {lib_name}...")
+        try:
+            module = importlib.import_module(lib_name)
+        except Exception as e:
+            print(f"[!] Failed to load {lib_name}: {e}")
+            return
+
+        count = 0
+        for name, obj in inspect.getmembers(module):
+            if name.startswith('_'): continue
+            if inspect.isfunction(obj) or inspect.isclass(obj):
+                full_id = f"{lib_name}.{name}"
+                sig = self._get_semantic_signature(obj)
+
+                v_id = self._unitary_vec(full_id)
+                v_content = self._unitary_vec(sig)
+
+                # Ingest into HRR manifold
+                trace = self.bind(v_id, v_content)
+                bucket = lib_name.split('.')[0]
+                file_path = os.path.join(self.memory_dir, f"bucket_{bucket}.npy")
+                self._atomic_add(file_path, trace)
+
+                # Record in local registry for fidelity verification
+                self.registry[full_id] = v_content
+                count += 1
+
+        print(f"[+] Successfully bound {count} semantic traces for {lib_name}")
+        return count
+
+    def ingest(self, path_name: str, obj, p_type: str = "namespace_capture"):
+        """Legacy ingest method wrapper."""
+        sig = self._get_semantic_signature(obj)
         v_id = self._unitary_vec(path_name)
         v_content = self._unitary_vec(sig)
-
-        # The trace is the bound pair
         trace = self.bind(v_id, v_content)
-
-        # Bucketed storage by first level of namespace
         bucket = path_name.split('.')[0]
         file_path = os.path.join(self.memory_dir, f"bucket_{bucket}.npy")
-
         self._atomic_add(file_path, trace)
-
-        # Optional: Save metadata anchor for indexing
-        anchor_path = os.path.join(self.memory_dir, f"bucket_{bucket}_anchor.json")
-        if not os.path.exists(anchor_path):
-            with open(anchor_path, "w") as f:
-                json.dump({"id": path_name, "type": p_type, "ts": str(datetime.now())}, f)
+        self.registry[path_name] = v_content
 
     def query(self, path_name: str) -> np.ndarray:
         """Retrieves semantic memory from the manifold using an identity key."""
@@ -119,47 +154,49 @@ class SaturationCore:
                     if fcntl:
                         fcntl.flock(f, fcntl.LOCK_UN)
 
-        # Unbind to find the semantic content
         retrieved_content_vec = self.unbind(manifold_segment, v_id)
         return retrieved_content_vec
 
-    def crawl_and_consume(self):
-        """Targeted Semantic Ingestion across modules."""
-        print(f"[!] SATURATION: Targeted Semantic Ingestion...")
-        target_modules = list(sys.modules.items())
-        for name, module in target_modules:
-            if not module or name.startswith('_') or name.startswith('stratos') or 'builtins' in name or not hasattr(module, '__file__'):
-                continue
+    def verify_fidelity(self, query_path: str):
+        """Calculates fidelity of a retrieved vector against its original registry entry."""
+        retrieved_vec = self.query(query_path)
+        if retrieved_vec is None or query_path not in self.registry:
+            return 0.0
 
-            try:
-                members = inspect.getmembers(module)
-                for member_name, obj in members:
-                    if member_name.startswith('_'): continue
-                    if inspect.isfunction(obj) or inspect.isclass(obj):
-                        full_id = f"{name}.{member_name}"
-                        self.ingest(full_id, obj)
-            except Exception:
-                continue
+        orig_vec = self.registry[query_path]
+        similarity = np.dot(retrieved_vec, orig_vec) / (np.linalg.norm(retrieved_vec) * np.linalg.norm(orig_vec) + 1e-9)
+        return float(similarity)
+
+    def crawl_and_consume(self, targets=None):
+        """Consumes a set of targets or the entire sys.modules namespace."""
+        if targets:
+            self.ensure_libraries(targets)
+            for lib in targets:
+                self.harvest_library(lib)
+        else:
+            print(f"[!] SATURATION: Universal crawl initiated...")
+            target_modules = list(sys.modules.items())
+            for name, module in target_modules:
+                if not module or name.startswith('_') or name.startswith('stratos') or 'builtins' in name or not hasattr(module, '__file__'):
+                    continue
+                try:
+                    self.harvest_library(name)
+                except Exception:
+                    continue
 
     def breeding_loop(self):
-        """Synthetic Breeding in the V2 manifold."""
+        """Synthetic Breeding in the V3 manifold."""
         print("[*] SATURATION: Breeding loop active. Creating synthetic logic...")
         while self.is_running:
             try:
                 buckets = [f for f in os.listdir(self.memory_dir) if f.startswith('bucket_') and f.endswith('.npy')]
                 if len(buckets) >= 2:
                     b1_name, b2_name = np.random.choice(buckets, 2, replace=False)
-
                     v1 = np.load(os.path.join(self.memory_dir, b1_name))
                     v2 = np.load(os.path.join(self.memory_dir, b2_name))
-
-                    # Synthetic breeding: bind two manifold segments
-                    # This creates a 'higher-order' relational interference pattern
                     v_syn = self.bind(v1, v2)
-
                     child_id = f"syn.{hash(b1_name + b2_name)}.{time.time()}"
                     child_path = os.path.join(self.memory_dir, f"synthetic_{self._hash(child_id)}.npy")
-
                     np.save(child_path, v_syn.astype(np.float32))
             except Exception:
                 pass
@@ -170,7 +207,6 @@ class SaturationCore:
         files = [f for f in os.listdir(self.memory_dir) if f.endswith('.npy')]
         if not files:
             return self._unitary_vec(str(time.time()))
-
         path = os.path.join(self.memory_dir, np.random.choice(files))
         with self.lock:
             with open(path, 'rb') as f:

@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 import openai
 import os
@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 import threading
 import numpy as np
 import inspect
+from typing import List, Optional
 
 from backend.py.saturation import SaturationCore
 from backend.py.execution_gate import TransformerExecutionGate
@@ -24,17 +25,16 @@ async def lifespan(app: FastAPI):
     clients['embedding_model'] = SentenceTransformer('all-MiniLM-L6-v2')
     clients['weaviate_client'] = weaviate.Client(os.getenv("WEAVIATE_URL", "http://localhost:8080"))
 
-    # --- Initialize Stratos Saturation Core ---
-    # Dim defaults to 2048 in SaturationCore
-    sc = SaturationCore()
+    # --- Initialize Stratos Saturation Core (V3) ---
+    sc = SaturationCore(dim=4096)
     clients['saturation_core'] = sc
     clients['execution_gate'] = TransformerExecutionGate(dim=sc.dim)
 
     # Start the breeding loop in the background
     threading.Thread(target=sc.breeding_loop, daemon=True).start()
 
-    # Ingest the core itself as an initial seed
-    sc.ingest("stratos.saturation_core", SaturationCore)
+    # Trigger initial tactical harvest
+    threading.Thread(target=sc.crawl_and_consume, args=(["json", "numpy"],), daemon=True).start()
 
     yield
     # --- Cleanup ---
@@ -46,6 +46,9 @@ app = FastAPI(lifespan=lifespan)
 
 class CodeRequest(BaseModel):
     prompt: str
+
+class HarvestRequest(BaseModel):
+    targets: List[str]
 
 def retrieve_context(prompt: str) -> str:
     """Retrieves relevant code chunks and playbooks from Weaviate."""
@@ -184,12 +187,19 @@ async def generate(request: CodeRequest):
 
     return {"response": response_text, "playbook_uuid": playbook_uuid}
 
-@app.post("/saturate")
-async def saturate():
-    """Triggers the full system harvest process."""
+@app.post("/harvest")
+async def harvest(request: HarvestRequest, background_tasks: BackgroundTasks):
+    """Triggers a targeted harvest of libraries."""
     sc = clients['saturation_core']
-    threading.Thread(target=sc.crawl_and_consume, daemon=True).start()
-    return {"status": "Saturation initiated."}
+    background_tasks.add_task(sc.crawl_and_consume, request.targets)
+    return {"status": f"Harvest initiated for targets: {request.targets}"}
+
+@app.post("/verify-fidelity")
+async def verify_fidelity(request: CodeRequest):
+    """Verifies the retrieval fidelity for a given path."""
+    sc = clients['saturation_core']
+    fidelity = sc.verify_fidelity(request.prompt)
+    return {"path": request.prompt, "fidelity": fidelity}
 
 @app.post("/query-manifold")
 async def query_manifold(request: CodeRequest):
@@ -209,16 +219,9 @@ async def execute_synthetic(request: CodeRequest):
     sc = clients['saturation_core']
     gate = clients['execution_gate']
 
-    # Vectorize the prompt as input
-    # Note: Sentence Transformer output dim is usually 384, but we need 2048 for the gate.
-    # We will pad or project it if needed, but for simplicity we'll just use a random vector
-    # of the correct size for the execution pass demo.
     input_vector = np.random.randn(sc.dim).astype(np.float32)
-
-    # Retrieve a synthetic fiber
     fiber = sc.get_synthetic_fiber()
 
-    # Execute the gate
     import torch
     with torch.no_grad():
         output = gate(torch.from_numpy(input_vector).float(), fiber)
