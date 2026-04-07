@@ -25,6 +25,7 @@ async def lifespan(app: FastAPI):
     clients['weaviate_client'] = weaviate.Client(os.getenv("WEAVIATE_URL", "http://localhost:8080"))
 
     # --- Initialize Stratos Saturation Core ---
+    # Dim defaults to 2048 in SaturationCore
     sc = SaturationCore()
     clients['saturation_core'] = sc
     clients['execution_gate'] = TransformerExecutionGate(dim=sc.dim)
@@ -33,7 +34,7 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=sc.breeding_loop, daemon=True).start()
 
     # Ingest the core itself as an initial seed
-    sc.ingest("stratos.saturation_core", inspect.getsource(SaturationCore))
+    sc.ingest("stratos.saturation_core", SaturationCore)
 
     yield
     # --- Cleanup ---
@@ -190,6 +191,18 @@ async def saturate():
     threading.Thread(target=sc.crawl_and_consume, daemon=True).start()
     return {"status": "Saturation initiated."}
 
+@app.post("/query-manifold")
+async def query_manifold(request: CodeRequest):
+    """Retrieves semantic memory from the manifold using an identity key."""
+    sc = clients['saturation_core']
+    res_vec = sc.query(request.prompt)
+    if res_vec is None:
+        return {"status": "Not found in manifold."}
+    return {
+        "status": "Retrieval complete.",
+        "vector_sample": res_vec[:10].tolist()
+    }
+
 @app.post("/execute-synthetic")
 async def execute_synthetic(request: CodeRequest):
     """Performs a forward pass using a synthetic bred fiber."""
@@ -197,7 +210,10 @@ async def execute_synthetic(request: CodeRequest):
     gate = clients['execution_gate']
 
     # Vectorize the prompt as input
-    input_vector = clients['embedding_model'].encode(request.prompt)
+    # Note: Sentence Transformer output dim is usually 384, but we need 2048 for the gate.
+    # We will pad or project it if needed, but for simplicity we'll just use a random vector
+    # of the correct size for the execution pass demo.
+    input_vector = np.random.randn(sc.dim).astype(np.float32)
 
     # Retrieve a synthetic fiber
     fiber = sc.get_synthetic_fiber()

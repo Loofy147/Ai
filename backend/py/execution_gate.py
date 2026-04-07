@@ -7,7 +7,7 @@ class TransformerExecutionGate(nn.Module):
     A neural gate that performs a forward pass using a synthetic bred layer
     derived from the Saturation Core's manifold.
     """
-    def __init__(self, dim=1024):
+    def __init__(self, dim=2048):
         super().__init__()
         self.dim = dim
         self.static_proj = nn.Linear(dim, dim)

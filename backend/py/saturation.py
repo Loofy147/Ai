@@ -7,16 +7,21 @@ import time
 import threading
 import json
 from datetime import datetime
+try:
+    import fcntl
+except ImportError:
+    # Fallback for systems without fcntl (though this environment should have it)
+    fcntl = None
 
 # =====================================================================
-# STRATOS OMEGA: SATURATION CORE
+# STRATOS OMEGA: SATURATION CORE (V2 - HRR MANIFOLD)
 # =====================================================================
 
 class SaturationCore:
-    def __init__(self, m=1000003, dim=1024):
+    def __init__(self, m=1000003, dim=2048):
         self.m = m
         self.dim = dim
-        self.memory_dir = './STRATOS_MEMORY'
+        self.memory_dir = './STRATOS_MEMORY_V2'
         os.makedirs(self.memory_dir, exist_ok=True)
         self.lock = threading.Lock()
         self.is_running = True
@@ -25,91 +30,150 @@ class SaturationCore:
         """High-precision hashing for the fiber manifold."""
         return int(hashlib.sha256(identity.encode()).hexdigest(), 16) % self.m
 
-    def _vec(self, seed: str) -> np.ndarray:
-        """Deterministic holographic vector generation."""
-        state = int(hashlib.md5(seed.encode()).hexdigest()[:8], 16) % (2**32)
+    def _unitary_vec(self, seed: str) -> np.ndarray:
+        """Generates a unitary vector in the Fourier domain to preserve energy during binding."""
+        state = int(hashlib.sha256(seed.encode()).hexdigest(), 16) % (2**32)
         np.random.seed(state)
-        v = np.random.randn(self.dim)
-        return v / (np.linalg.norm(v) + 1e-9).astype(np.float32)
+        # HRRs work best when components are drawn from N(0, 1/n)
+        v = np.random.normal(0, 1/np.sqrt(self.dim), self.dim)
+        return v.astype(np.float32)
 
-    def ingest(self, identity: str, payload: str, p_type: str = "raw_source"):
-        """Injects identity and data into the additive manifold space."""
-        fiber_id = self._hash(identity)
-        v_subj = self._vec(identity)
-        v_data = self._vec(str(payload)[:1000]) # Sample the data for the vector
+    def bind(self, a, b):
+        """Holographic Binding: Circular Convolution via FFT."""
+        return np.fft.ifft(np.fft.fft(a) * np.fft.fft(b)).real.astype(np.float32)
 
-        path = os.path.join(self.memory_dir, f"fiber_{fiber_id}.npy")
-        anchor_path = os.path.join(self.memory_dir, f"fiber_{fiber_id}_anchor.json")
+    def unbind(self, composite, a):
+        """Holographic Retrieval: Circular Correlation (approximate inverse)."""
+        # Circular correlation is FFT(a)* * FFT(composite)
+        return np.fft.ifft(np.conj(np.fft.fft(a)) * np.fft.fft(composite)).real.astype(np.float32)
 
+    def _get_semantic_signature(self, obj):
+        """Extracts actual bytecode or source instead of just the string rep."""
+        try:
+            return inspect.getsource(obj)
+        except Exception:
+            try:
+                return str(obj.__code__.co_code) if hasattr(obj, '__code__') else str(obj)
+            except Exception:
+                return str(obj)
+
+    def _atomic_add(self, filepath, vector):
+        """Thread-safe and process-safe accumulation into the manifold."""
         with self.lock:
-            # Additive Superposition in the Frequency Domain
-            trace = np.load(path) if os.path.exists(path) else np.zeros(self.dim)
-            # Circular convolution via FFT to bind subject to data
-            binding = np.fft.ifft(np.fft.fft(v_subj) * np.fft.fft(v_data)).real
-            trace = (trace + binding)
-            # Normalize to maintain manifold stability
-            trace /= (np.linalg.norm(trace) + 1e-9)
-            np.save(path, trace.astype(np.float32))
+            mode = 'rb+' if os.path.exists(filepath) else 'wb+'
+            with open(filepath, mode) as f:
+                if fcntl:
+                    fcntl.flock(f, fcntl.LOCK_EX)
+                try:
+                    if mode == 'rb+':
+                        existing = np.load(f)
+                        # Superposition: ADD
+                        new_v = existing + vector
+                        f.seek(0)
+                        np.save(f, new_v.astype(np.float32))
+                    else:
+                        np.save(f, vector.astype(np.float32))
+                finally:
+                    if fcntl:
+                        fcntl.flock(f, fcntl.LOCK_UN)
 
-            # Save the metadata anchor if it doesn't exist
-            if not os.path.exists(anchor_path):
-                with open(anchor_path, "w") as f:
-                    json.dump({"id": identity, "type": p_type, "ts": str(datetime.now())}, f)
+    def ingest(self, path_name: str, obj, p_type: str = "namespace_capture"):
+        """Binds an identity vector to a semantic content vector and adds to manifold."""
+        sig = self._get_semantic_signature(obj)
+
+        v_id = self._unitary_vec(path_name)
+        v_content = self._unitary_vec(sig)
+
+        # The trace is the bound pair
+        trace = self.bind(v_id, v_content)
+
+        # Bucketed storage by first level of namespace
+        bucket = path_name.split('.')[0]
+        file_path = os.path.join(self.memory_dir, f"{bucket}.npy")
+
+        self._atomic_add(file_path, trace)
+
+        # Optional: Save metadata anchor for indexing
+        anchor_path = os.path.join(self.memory_dir, f"{bucket}_anchor.json")
+        if not os.path.exists(anchor_path):
+            with open(anchor_path, "w") as f:
+                json.dump({"id": path_name, "type": p_type, "ts": str(datetime.now())}, f)
+
+    def query(self, path_name: str) -> np.ndarray:
+        """Retrieves semantic memory from the manifold using an identity key."""
+        bucket = path_name.split('.')[0]
+        file_path = os.path.join(self.memory_dir, f"{bucket}.npy")
+
+        if not os.path.exists(file_path):
+            return None
+
+        v_id = self._unitary_vec(path_name)
+        with self.lock:
+            with open(file_path, 'rb') as f:
+                if fcntl:
+                    fcntl.flock(f, fcntl.LOCK_SH)
+                try:
+                    manifold_segment = np.load(f)
+                finally:
+                    if fcntl:
+                        fcntl.flock(f, fcntl.LOCK_UN)
+
+        # Unbind to find the semantic content
+        retrieved_content_vec = self.unbind(manifold_segment, v_id)
+        return retrieved_content_vec
 
     def crawl_and_consume(self):
-        """Recursively consumes the entire accessible Python namespace."""
-        print(f"[*] SATURATION: Harvesting system modules...")
-
-        # We target modules, then members within those modules
+        """Targeted Semantic Ingestion across modules."""
+        print(f"[*] SATURATION: Targeted Semantic Ingestion...")
         target_modules = list(sys.modules.items())
         for name, module in target_modules:
-            if not module or name.startswith('_'): continue
+            if not module or name.startswith('_') or name.startswith('stratos') or 'builtins' in name:
+                continue
 
             try:
-                # Attempt to get members without triggering heavy execution
                 members = inspect.getmembers(module)
                 for member_name, obj in members:
                     if member_name.startswith('_'): continue
-
-                    full_id = f"{name}.{member_name}"
-                    # Ingest the string representation and the type
-                    self.ingest(full_id, str(obj), p_type="namespace_capture")
-
+                    if inspect.isfunction(obj) or inspect.isclass(obj):
+                        full_id = f"{name}.{member_name}"
+                        self.ingest(full_id, obj)
             except Exception:
-                continue # Skip modules that resist inspection
+                continue
 
     def breeding_loop(self):
-        """The 'Synthetic Breeding' phase: creating new logic from cross-pollination."""
+        """Synthetic Breeding in the V2 manifold."""
         print("[*] SATURATION: Breeding loop active. Creating synthetic logic...")
         while self.is_running:
             try:
-                fibers = [f for f in os.listdir(self.memory_dir) if f.endswith('.npy')]
-                if len(fibers) > 2:
-                    # Randomly select two 'parents' from the manifold
-                    p1_name, p2_name = np.random.choice(fibers, 2, replace=False)
-                    v1 = np.load(os.path.join(self.memory_dir, p1_name))
-                    v2 = np.load(os.path.join(self.memory_dir, p2_name))
+                buckets = [f for f in os.listdir(self.memory_dir) if f.endswith('.npy')]
+                if len(buckets) >= 2:
+                    b1_name, b2_name = np.random.choice(buckets, 2, replace=False)
 
-                    # Spectral Synthesis (interference pattern)
-                    v_syn = np.fft.ifft(np.fft.fft(v1) * np.fft.fft(v2)).real
-                    v_syn /= (np.linalg.norm(v_syn) + 1e-9)
+                    v1 = np.load(os.path.join(self.memory_dir, b1_name))
+                    v2 = np.load(os.path.join(self.memory_dir, b2_name))
 
-                    # Create a synthetic child fiber
-                    child_id = f"syn.{hash(p1_name + p2_name)}.{time.time()}"
-                    child_hash = self._hash(child_id)
-                    np.save(os.path.join(self.memory_dir, f"fiber_{child_hash}.npy"), v_syn.astype(np.float32))
+                    # Synthetic breeding: bind two manifold segments
+                    # This creates a 'higher-order' relational interference pattern
+                    v_syn = self.bind(v1, v2)
+
+                    child_id = f"syn.{hash(b1_name + b2_name)}.{time.time()}"
+                    child_path = os.path.join(self.memory_dir, f"synthetic_{self._hash(child_id)}.npy")
+
+                    np.save(child_path, v_syn.astype(np.float32))
             except Exception:
                 pass
-            time.sleep(0.005) # Hyper-speed breeding
+            time.sleep(0.005)
 
     def get_synthetic_fiber(self) -> np.ndarray:
-        """Retrieves a random synthetic fiber from the manifold."""
-        fibers = [f for f in os.listdir(self.memory_dir) if f.endswith('.npy')]
-        if not fibers:
-            return np.random.randn(self.dim).astype(np.float32)
+        """Retrieves a random fiber or synthetic segment from the manifold."""
+        files = [f for f in os.listdir(self.memory_dir) if f.endswith('.npy')]
+        if not files:
+            return self._unitary_vec(str(time.time()))
 
-        path = os.path.join(self.memory_dir, np.random.choice(fibers))
-        return np.load(path).astype(np.float32)
+        path = os.path.join(self.memory_dir, np.random.choice(files))
+        with self.lock:
+            with open(path, 'rb') as f:
+                return np.load(f).astype(np.float32)
 
     def stop(self):
         self.is_running = False
