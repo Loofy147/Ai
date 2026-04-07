@@ -71,6 +71,7 @@ class SaturationCore:
                         new_v = existing + vector
                         f.seek(0)
                         np.save(f, new_v.astype(np.float32))
+                        f.truncate()
                     else:
                         np.save(f, vector.astype(np.float32))
                 finally:
@@ -89,12 +90,12 @@ class SaturationCore:
 
         # Bucketed storage by first level of namespace
         bucket = path_name.split('.')[0]
-        file_path = os.path.join(self.memory_dir, f"{bucket}.npy")
+        file_path = os.path.join(self.memory_dir, f"bucket_{bucket}.npy")
 
         self._atomic_add(file_path, trace)
 
         # Optional: Save metadata anchor for indexing
-        anchor_path = os.path.join(self.memory_dir, f"{bucket}_anchor.json")
+        anchor_path = os.path.join(self.memory_dir, f"bucket_{bucket}_anchor.json")
         if not os.path.exists(anchor_path):
             with open(anchor_path, "w") as f:
                 json.dump({"id": path_name, "type": p_type, "ts": str(datetime.now())}, f)
@@ -102,7 +103,7 @@ class SaturationCore:
     def query(self, path_name: str) -> np.ndarray:
         """Retrieves semantic memory from the manifold using an identity key."""
         bucket = path_name.split('.')[0]
-        file_path = os.path.join(self.memory_dir, f"{bucket}.npy")
+        file_path = os.path.join(self.memory_dir, f"bucket_{bucket}.npy")
 
         if not os.path.exists(file_path):
             return None
@@ -124,10 +125,10 @@ class SaturationCore:
 
     def crawl_and_consume(self):
         """Targeted Semantic Ingestion across modules."""
-        print(f"[*] SATURATION: Targeted Semantic Ingestion...")
+        print(f"[!] SATURATION: Targeted Semantic Ingestion...")
         target_modules = list(sys.modules.items())
         for name, module in target_modules:
-            if not module or name.startswith('_') or name.startswith('stratos') or 'builtins' in name:
+            if not module or name.startswith('_') or name.startswith('stratos') or 'builtins' in name or not hasattr(module, '__file__'):
                 continue
 
             try:
@@ -145,7 +146,7 @@ class SaturationCore:
         print("[*] SATURATION: Breeding loop active. Creating synthetic logic...")
         while self.is_running:
             try:
-                buckets = [f for f in os.listdir(self.memory_dir) if f.endswith('.npy')]
+                buckets = [f for f in os.listdir(self.memory_dir) if f.startswith('bucket_') and f.endswith('.npy')]
                 if len(buckets) >= 2:
                     b1_name, b2_name = np.random.choice(buckets, 2, replace=False)
 
